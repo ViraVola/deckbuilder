@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14161c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Deckbuilder">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Deckbuilder</title>
+</head>
+<body data-pane="deck">
+  <header class="topbar">
+    <select id="deckSelect" aria-label="Choose deck"></select>
+    <button id="newDeckBtn" title="New deck">+ New</button>
+    <button id="importBtn">Import</button>
+    <button id="exportBtn">Export</button>
+    <span class="spacer"></span>
+    <label class="viewtoggle" title="Show card art or a compact list">
+      View
+      <select id="viewSelect">
+        <option value="images">Card art</option>
+        <option value="list">Text list</option>
+      </select>
+    </label>
+  </header>
+
+  <main class="layout">
+    <section id="deckPane" class="pane" aria-label="Deck">
+      <div class="deckhead">
+        <input id="deckName" aria-label="Deck name" placeholder="Deck name">
+        <select id="formatSelect" aria-label="Format"></select>
+        <button id="deleteDeckBtn" title="Delete this deck">Delete</button>
+      </div>
+      <div id="deckSummary" class="summary"></div>
+      <div id="deckWarnings" class="warnings"></div>
+      <div id="deckBody"></div>
+    </section>
+
+    <section id="searchPane" class="pane" aria-label="Card search">
+      <form id="searchForm" autocomplete="off">
+        <div class="searchrow">
+          <input id="q" type="search" placeholder='Search cards (Scryfall syntax, e.g. t:instant o:"draw a card")' aria-label="Search cards">
+          <button type="submit" class="primary">Search</button>
+        </div>
+        <details class="filters" open>
+          <summary>Filters</summary>
+          <div class="filtergrid">
+            <fieldset>
+              <legend>Color identity</legend>
+              <label><input type="checkbox" name="ci" value="w"> W</label>
+              <label><input type="checkbox" name="ci" value="u"> U</label>
+              <label><input type="checkbox" name="ci" value="b"> B</label>
+              <label><input type="checkbox" name="ci" value="r"> R</label>
+              <label><input type="checkbox" name="ci" value="g"> G</label>
+              <label><input type="checkbox" name="ci" value="c"> C</label>
+              <select id="ciMode" aria-label="Color match mode">
+                <option value="<=">Within these</option>
+                <option value="=">Exactly these</option>
+                <option value=">=">Includes these</option>
+              </select>
+            </fieldset>
+            <label>Type
+              <select id="fType">
+                <option value="">Any</option>
+                <option>creature</option><option>instant</option><option>sorcery</option>
+                <option>artifact</option><option>enchantment</option><option>planeswalker</option>
+                <option>land</option><option>battle</option><option>legendary</option>
+              </select>
+            </label>
+            <label>Mana value
+              <input id="fMv" placeholder="e.g. 3 or <=2" size="8">
+            </label>
+            <label>Legal in
+              <select id="fLegal">
+                <option value="">Any</option>
+                <option value="commander">Commander</option>
+                <option value="legacy">Legacy</option>
+                <option value="vintage">Vintage</option>
+                <option value="duel">Duel Commander</option>
+                <option value="modern">Modern</option>
+                <option value="pauper">Pauper</option>
+              </select>
+            </label>
+            <label>Rarity
+              <select id="fRarity">
+                <option value="">Any</option>
+                <option>common</option><option>uncommon</option><option>rare</option><option>mythic</option>
+              </select>
+            </label>
+            <label>Set
+              <input id="fSet" placeholder="code, e.g. mh3" size="8">
+            </label>
+            <label>Show
+              <select id="fUnique">
+                <option value="cards">One per card</option>
+                <option value="art">Every unique art</option>
+                <option value="prints">Every printing</option>
+              </select>
+            </label>
+            <label>Sort
+              <select id="fOrder">
+                <option value="name">Name</option>
+                <option value="cmc">Mana value</option>
+                <option value="edhrec">EDHREC rank</option>
+                <option value="released">Release date</option>
+                <option value="color">Color</option>
+              </select>
+            </label>
+            <label class="check"><input id="fCmdColors" type="checkbox"> Only my commander's colors</label>
+          </div>
+        </details>
+      </form>
+      <div id="searchStatus" class="status"></div>
+      <div id="results"></div>
+      <button id="moreBtn" hidden>Load more</button>
+    </section>
+  </main>
+
+  <nav class="bottomnav" aria-label="Switch view">
+    <button data-pane-btn="deck" class="on">Deck</button>
+    <button data-pane-btn="search">Search</button>
+  </nav>
+
+  <dialog id="importDialog">
+    <form method="dialog" id="importForm">
+      <h2>Import a deck</h2>
+      <p class="hint">Paste a list, or choose a file. Works with Decked Builder .dec files and plain text (<code>4 Lightning Bolt</code>, <code>SB: 1 Pyroblast</code>, "Sideboard" headers).</p>
+      <input id="importFile" type="file" accept=".dec,.txt,.csv,text/plain">
+      <textarea id="importText" rows="10" placeholder="Paste a decklist here"></textarea>
+      <div class="row">
+        <label>Name <input id="importName" placeholder="(from file name)"></label>
+        <label>Format <select id="importFormat"></select></label>
+      </div>
+      <div id="importStatus" class="status"></div>
+      <div class="row end">
+        <button type="button" id="importCancel">Cancel</button>
+        <button type="submit" class="primary" id="importGo">Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="cardDialog">
+    <div id="cardDetail"></div>
+    <div class="row end"><button id="cardClose">Close</button></div>
+  </dialog>
+
+  <dialog id="exportDialog">
+    <h2>Export</h2>
+    <textarea id="exportText" rows="12" readonly></textarea>
+    <div class="row end">
+      <button id="exportCopy">Copy</button>
+      <button id="exportDownload">Download .txt</button>
+      <button id="exportClose">Close</button>
+    </div>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
