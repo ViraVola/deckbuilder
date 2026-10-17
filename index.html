@@ -43,12 +43,19 @@
     <section id="searchPane" class="pane" aria-label="Card search">
       <form id="searchForm" autocomplete="off">
         <div class="searchrow">
-          <input id="q" type="search" placeholder='Search cards (Scryfall syntax, e.g. t:instant o:"draw a card")' aria-label="Search cards">
+          <input id="q" type="search" placeholder='Search cards, e.g. draw a card, or t:instant ci:ur' aria-label="Search cards">
           <button type="submit" class="primary">Search</button>
         </div>
         <details class="filters" open>
           <summary>Filters</summary>
           <div class="filtergrid">
+            <label>Words match
+              <select id="fTextMode">
+                <option value="both">Name and rules text</option>
+                <option value="name">Name only</option>
+                <option value="text">Rules text only</option>
+              </select>
+            </label>
             <fieldset>
               <legend>Color identity</legend>
               <label><input type="checkbox" name="ci" value="w"> W</label>

@@ -1,9 +1,9 @@
 // Caches the app itself so it opens offline. Card data and images come from
 // Scryfall and are cached by the browser; searching still needs a connection.
-const CACHE = 'deckbuilder-v1';
+const CACHE = 'deckbuilder-v3';
 const SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
-  './src/app.js', './src/parser.js', './src/scryfall.js', './src/deck.js', './src/store.js',
+  './src/app.js', './src/parser.js', './src/scryfall.js', './src/deck.js', './src/store.js', './src/query.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
 ];
 
