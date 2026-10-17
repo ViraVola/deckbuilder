@@ -130,3 +130,6 @@ dialog h2 { margin: 0 0 8px; font-size: 18px; }
   .tiles { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
   #toast { bottom: calc(76px + env(safe-area-inset-bottom)); }
 }
+
+.ver { color: var(--muted); font-size: 11px; }
+.qline { font: 12px/1.3 ui-monospace, Menlo, Consolas, monospace; word-break: break-word; margin-top: -4px; }

@@ -4,6 +4,7 @@
 const API = 'https://api.scryfall.com';
 const GET_HEADERS = { Accept: 'application/json;q=0.9,*/*;q=0.8' };
 
+const MAX_COLLECTION_MVID = 999999;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function frontName(name) {
@@ -104,8 +105,10 @@ export async function fetchCollection(identifiers, onProgress) {
 // Prefers the exact printing (multiverse id, or set + number), falls back to
 // a name lookup. Returns { resolved, missing }.
 export async function resolveEntries(entries, onProgress) {
+  // Scryfall's /cards/collection rejects multiverse ids longer than 6 digits
+  // (newer cards have 7-digit ones), so those fall back to a name lookup.
   const first = entries.map((e) => {
-    if (e.mvid) return { multiverse_id: e.mvid };
+    if (e.mvid && e.mvid <= MAX_COLLECTION_MVID) return { multiverse_id: e.mvid };
     if (e.set && e.cn) return { set: e.set, collector_number: e.cn };
     return { name: e.name };
   });

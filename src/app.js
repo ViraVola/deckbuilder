@@ -5,6 +5,8 @@ import {
   removeCommander, commanderIdentity, commanderCandidates, groupByType, deckCounts,
   issues, toText, deckFromResolved, frontType,
 } from './deck.js';
+import { expandQuery } from './query.js';
+import { VERSION } from './version.js';
 import { loadDecks, saveDecks, loadPrefs, savePrefs } from './store.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -14,7 +16,7 @@ const esc = (s) =>
 let decks = loadDecks();
 let prefs = loadPrefs();
 let deck = null;
-const results = { cards: [], total: 0, nextUrl: null, busy: false };
+const results = { cards: [], total: 0, nextUrl: null, busy: false, query: '' };
 
 // ---------- persistence ----------
 
@@ -193,7 +195,7 @@ function changed() {
 
 function buildQuery() {
   const parts = [];
-  const raw = $('#q').value.trim();
+  const raw = expandQuery($('#q').value, $('#fTextMode').value);
   if (raw) parts.push(raw);
 
   let colors = [...document.querySelectorAll('input[name="ci"]:checked')].map((i) => i.value);
@@ -233,6 +235,8 @@ async function runSearch(append = false) {
     results.cards = [];
     results.total = 0;
     results.nextUrl = null;
+    results.query = query;
+    $('#searchQuery').textContent = `Scryfall query: ${query}`;
     renderResults();
   }
   results.busy = true;
@@ -474,6 +478,7 @@ function switchDeck(id) {
 
 function init() {
   fillFormatSelects();
+  $('#ver').textContent = VERSION;
   if (!Object.keys(decks).length) {
     const d = newDeck('My first deck', 'commander');
     decks[d.id] = d;

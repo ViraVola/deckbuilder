@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { parseDeckList } from '../src/parser.js';
+import { expandQuery } from '../src/query.js';
 import { resolveEntries, slimCard } from '../src/scryfall.js';
 import {
   newDeck, addCard, makeCommander, addCommander, removeCommander, pairingProblem,
@@ -57,6 +58,10 @@ await test('import pipeline resolves by mvid, falls back to name, reports missin
     const data = [];
     const not_found = [];
     for (const id of ids) {
+      if (id.multiverse_id > 999999) {
+        // real Scryfall rejects the whole request for 7-digit multiverse ids
+        return { ok: false, status: 400, json: async () => ({ details: 'A `multiverse_id` identifier must be between 1-6 digits: ' + id.multiverse_id }) };
+      }
       if (id.multiverse_id) {
         const e = entries.find((x) => x.mvid === id.multiverse_id);
         if (e.name === 'Sol Ring') { not_found.push(id); continue; } // force fallback to name
@@ -159,6 +164,20 @@ await test('singleton + identity + legality warnings; export round-trips', () =>
   const back = parseDeckList(text).entries;
   assert.equal(back.find((e) => e.zone === 'commander').name, 'Cmdr');
   assert.equal(back.find((e) => e.name === 'Dupe').qty, 2);
+});
+
+await test('plain words search name and rules text; syntax passes through', () => {
+  assert.equal(expandQuery('draw card'), '(name:"draw" or o:"draw") (name:"card" or o:"card")');
+  assert.equal(expandQuery('"draw a card"'), '(name:"draw a card" or o:"draw a card")');
+  assert.equal(expandQuery("Gaea's Cradle"), '(name:"Gaea\'s" or o:"Gaea\'s") (name:"Cradle" or o:"Cradle")');
+  assert.equal(expandQuery('t:instant o:"draw a card"'), 't:instant o:"draw a card"');
+  assert.equal(expandQuery('t:instant draw'), 't:instant (name:"draw" or o:"draw")');
+  assert.equal(expandQuery('-o:flying cmc<=2 or t:land'), '-o:flying cmc<=2 or t:land');
+  assert.equal(expandQuery('(t:elf or t:wizard)'), '(t:elf or t:wizard)');
+  assert.equal(expandQuery('storm-kiln'), '(name:"storm-kiln" or o:"storm-kiln")');
+  assert.equal(expandQuery('draw card', 'name'), 'draw card');
+  assert.equal(expandQuery('draw card', 'text'), 'o:"draw" o:"card"');
+  assert.equal(expandQuery('   '), '');
 });
 
 console.log(`\n${passed} tests passed`);
