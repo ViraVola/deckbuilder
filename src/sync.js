@@ -30,7 +30,7 @@ export class SyncError extends Error {
   }
 }
 
-export const emptyDoc = () => ({ v: 1, decks: {}, deleted: {} });
+export const emptyDoc = () => ({ v: 1, decks: {}, deleted: {}, favs: {}, art: null });
 
 // ---------- compact deck format ----------
 
@@ -188,7 +188,7 @@ function parseDoc(text) {
   }
   if (!doc || typeof doc !== 'object') doc = {};
   if (doc.v > 1) throw new SyncError('The sync file was written by a newer version of the app. Reload to update.', 'version');
-  return { v: 1, decks: doc.decks || {}, deleted: doc.deleted || {} };
+  return { v: 1, decks: doc.decks || {}, deleted: doc.deleted || {}, favs: doc.favs || {}, art: doc.art || null };
 }
 
 async function readGist(token, id) {
@@ -218,7 +218,10 @@ async function writeGist(token, id, doc) {
 // state:    { token, gistId, base, deleted, lastSync } (changed in place; save it afterwards)
 // getDecks: () => { id: deck }  (the live map)
 // apply:    ({ upsert: [deck], remove: [id] }) => void  (write remote changes into the app)
-export async function runSync({ state, getDecks, apply, fetchCards = fetchCollection, now = () => Date.now() }) {
+// getSettings / applySettings (optional): favorite printings and art rules.
+//   getSettings() => { favs: { oracle_id: { card|null, t } }, art: { rules, prefer, t } }
+//   applySettings({ favs: {only the entries that came from another device}, art: art|null })
+export async function runSync({ state, getDecks, apply, getSettings = null, applySettings = null, fetchCards = fetchCollection, now = () => Date.now() }) {
   if (!state.token) throw new SyncError('Sync is not connected.', 'auth');
   state.base = state.base || {};
   state.deleted = state.deleted || {};
@@ -256,8 +259,21 @@ export async function runSync({ state, getDecks, apply, fetchCards = fetchCollec
     for (const c of d.commanders) known.set(c.id, c);
     for (const e of [...d.main, ...d.maybe]) known.set(e.card.id, e.card);
   }
+  const settings = getSettings ? getSettings() : null;
+  const favPull = [];
+  if (settings) {
+    for (const f of Object.values(settings.favs || {})) if (f.card) known.set(f.card.id, f.card);
+    for (const [k, R] of Object.entries(remote.favs || {})) {
+      const L = (settings.favs || {})[k];
+      if (!L || R.t > L.t) favPull.push(k);
+    }
+  }
   const need = new Set();
   for (const id of incoming) for (const cid of cardIdsOf(remote.decks[id])) if (!known.has(cid)) need.add(cid);
+  for (const k of favPull) {
+    const fid = remote.favs[k].id;
+    if (fid && !known.has(fid)) need.add(fid);
+  }
   if (need.size) {
     let found;
     try {
@@ -319,6 +335,22 @@ export async function runSync({ state, getDecks, apply, fetchCards = fetchCollec
   }
   if (upsert.length || remove.length || copies.length) apply({ upsert: [...upsert, ...copies], remove });
 
+  if (settings && applySettings) {
+    const favs = {};
+    for (const k of favPull) {
+      const R = remote.favs[k];
+      const card = R.id ? known.get(R.id) : null;
+      if (R.id && !card) {
+        missing++;
+        continue;
+      }
+      favs[k] = { card, t: R.t };
+    }
+    const la = settings.art;
+    const art = remote.art && (!la || (remote.art.t || 0) > (la.t || 0)) ? remote.art : null;
+    if (Object.keys(favs).length || art) applySettings({ favs, art });
+  }
+
   // 5. Build the new gist contents and save it if anything changed.
   const after = getDecks();
   const outDecks = { ...remote.decks };
@@ -339,12 +371,25 @@ export async function runSync({ state, getDecks, apply, fetchCards = fetchCollec
   for (const id of Object.keys(outDeleted)) if (!(outDeleted[id] >= cutoff)) delete outDeleted[id];
   for (const id of Object.keys(state.deleted)) if (!(state.deleted[id] >= cutoff)) delete state.deleted[id];
 
+  let outFavs = remote.favs || {};
+  let outArt = remote.art || null;
+  if (settings) {
+    const now2 = getSettings();
+    outFavs = { ...outFavs };
+    for (const [k, L] of Object.entries(now2.favs || {})) {
+      if (!outFavs[k] || L.t > outFavs[k].t) outFavs[k] = { id: L.card ? L.card.id : null, t: L.t };
+    }
+    if (now2.art && now2.art.t && (!outArt || now2.art.t > (outArt.t || 0))) outArt = now2.art;
+  }
+
   const changed =
     brandNew ||
     JSON.stringify(outDecks) !== JSON.stringify(remote.decks) ||
-    JSON.stringify(outDeleted) !== JSON.stringify(remote.deleted);
+    JSON.stringify(outDeleted) !== JSON.stringify(remote.deleted) ||
+    JSON.stringify(outFavs) !== JSON.stringify(remote.favs || {}) ||
+    JSON.stringify(outArt) !== JSON.stringify(remote.art || null);
   if (changed) {
-    const doc = { v: 1, decks: outDecks, deleted: outDeleted };
+    const doc = { v: 1, decks: outDecks, deleted: outDeleted, favs: outFavs, art: outArt };
     if (!state.gistId) state.gistId = await createGist(state.token, doc);
     else await writeGist(state.token, state.gistId, doc);
   }

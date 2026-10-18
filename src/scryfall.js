@@ -44,8 +44,16 @@ export function slimCard(c) {
     rarity: c.rarity,
     layout: c.layout,
     mvids: c.multiverse_ids || [],
-    img: { small: uris.small, normal: uris.normal, art: uris.art_crop },
-    img_back: backUris ? { small: backUris.small, normal: backUris.normal, art: backUris.art_crop } : null,
+    lang: c.lang || 'en',
+    promo: !!c.promo,
+    promo_types: c.promo_types || [],
+    frame_effects: c.frame_effects || [],
+    full_art: !!c.full_art,
+    border: c.border_color || '',
+    illustration_id: c.illustration_id || (faces[0] && faces[0].illustration_id) || null,
+    released: c.released_at || '',
+    img: { small: uris.small, normal: uris.normal, large: uris.large, art: uris.art_crop },
+    img_back: backUris ? { small: backUris.small, normal: backUris.normal, large: backUris.large, art: backUris.art_crop } : null,
   };
 }
 
@@ -149,3 +157,10 @@ export async function resolveEntries(entries, onProgress) {
   }
   return { resolved, missing };
 }
+
+// All printings of one card (every language), newest first.
+export async function printingsOf(oracleId, nextUrl = null) {
+  return search(`oracleid:${oracleId} lang:any`, { unique: 'prints', order: 'released', nextUrl });
+}
+
+export const pause = sleep;

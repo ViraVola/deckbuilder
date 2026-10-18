@@ -1,13 +1,14 @@
 import { parseDeckList } from './parser.js';
-import { search, resolveEntries } from './scryfall.js';
+import { search, resolveEntries, printingsOf, pause } from './scryfall.js';
 import {
   FORMATS, formatInfo, newDeck, addCard, setQty, removeCard, moveCard, makeCommander,
   removeCommander, commanderIdentity, commanderCandidates, groupByType, deckCounts,
-  issues, toText, deckFromResolved, frontType,
+  issues, toText, deckFromResolved, frontType, swapPrinting,
 } from './deck.js';
+import { defaultArt, choosePrintings, favoriteOf, ruleQuery, ruleMatches, imageUrl, PREFER_OPTIONS } from './art.js';
 import { expandQuery } from './query.js';
 import { VERSION } from './version.js';
-import { loadDecks, saveDecks, loadPrefs, savePrefs, loadSync, saveSync, requestPersistence } from './store.js';
+import { loadArtPrefs, saveArtPrefs, loadDecks, saveDecks, loadPrefs, savePrefs, loadSync, saveSync, requestPersistence } from './store.js';
 import { runSync, SyncError, TOKEN_URL } from './sync.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -18,8 +19,9 @@ let decks = loadDecks();
 let prefs = loadPrefs();
 let deck = null;
 let sync = loadSync();
+let artPrefs = loadArtPrefs(defaultArt());
 const syncUi = { running: false, again: false, timer: null, error: '', kind: '' };
-const results = { cards: [], total: 0, nextUrl: null, busy: false, query: '' };
+const results = { cards: [], total: 0, nextUrl: null, busy: false, query: '', display: new Map(), ruleCache: {}, token: 0 };
 
 // ---------- persistence ----------
 
@@ -99,7 +101,7 @@ async function doSync(manual) {
   syncUi.running = true;
   renderSync();
   try {
-    const r = await runSync({ state: sync, getDecks: syncableDecks, apply: applyRemote });
+    const r = await runSync({ state: sync, getDecks: syncableDecks, apply: applyRemote, getSettings: () => artPrefs, applySettings: applyRemoteArt });
     syncUi.error = '';
     syncUi.kind = '';
     const notes = [];
@@ -120,6 +122,22 @@ async function doSync(manual) {
       scheduleSync(1500);
     }
   }
+}
+
+// Favorites / art rules that arrived from another device.
+function applyRemoteArt({ favs = {}, art = null }) {
+  for (const [k, f] of Object.entries(favs)) {
+    const cur = artPrefs.favs[k];
+    if (!cur || f.t > cur.t) artPrefs.favs[k] = f;
+  }
+  if (art && (art.t || 0) > (artPrefs.art.t || 0)) artPrefs.art = art;
+  saveArtPrefs(artPrefs);
+  refreshFavoritesInResults();
+}
+
+function saveArt() {
+  saveArtPrefs(artPrefs);
+  scheduleSync(3000);
 }
 
 function renderSync() {
@@ -175,7 +193,7 @@ function pips(cost) {
   );
 }
 
-const imgOf = (card, size = 'small') => (card.img && (card.img[size] || card.img.normal)) || '';
+const imgOf = (card, size = 'normal') => imageUrl(card, size);
 
 function cardByName(name) {
   return (
@@ -334,6 +352,7 @@ function buildQuery() {
   if (rarity) parts.push(`r:${rarity}`);
   const set = $('#fSet').value.trim();
   if (set) parts.push(`s:${set}`);
+  if (artPrefs.art.prefer && $('#fUnique').value === 'cards' && !/\bprefer:/.test(raw)) parts.push(`prefer:${artPrefs.art.prefer}`);
   if ($('#fCmdColors').checked) {
     const id = commanderIdentity(deck);
     if (!deck.commanders.length) toast("No commander set, so color limit was skipped.");
@@ -375,11 +394,65 @@ async function runSearch(append = false) {
     status.textContent = results.cards.length
       ? `Showing ${results.cards.length} of ${results.total}` + (res.warnings.length ? ` · ${res.warnings.join(' ')}` : '')
       : 'No cards found.';
+    if (!append) {
+      results.display = new Map();
+      results.ruleCache = {};
+    }
+    upgradeArt(++results.token);
   } catch (err) {
     status.className = 'status err';
     status.textContent = navigator.onLine === false ? 'You appear to be offline.' : String(err.message || err);
   } finally {
     results.busy = false;
+    renderResults();
+  }
+}
+
+// ---------- preferred artwork in search results ----------
+
+const shown = (c) => (results.display.get(c.oracle_id) || {}).card || c;
+
+function refreshFavoritesInResults() {
+  for (const c of results.cards) {
+    const fav = favoriteOf(artPrefs.favs, c.oracle_id);
+    const cur = results.display.get(c.oracle_id);
+    if (fav) results.display.set(c.oracle_id, { card: fav, why: 'Your favorite printing' });
+    else if (cur && cur.why === 'Your favorite printing') results.display.delete(c.oracle_id);
+  }
+  renderResults();
+}
+
+// Show favorites straight away, then look for printings that match your art
+// rules (one extra Scryfall search per rule, only for cards still needing one).
+async function upgradeArt(token) {
+  refreshFavoritesInResults();
+  if ($('#fUnique').value !== 'cards' || !results.cards.length) return;
+  const rules = artPrefs.art.rules.filter((r) => r.on);
+  const found = new Map();
+  const order = $('#fOrder').value;
+  const needs = () => results.cards.filter((c) => !results.display.has(c.oracle_id));
+  for (const rule of rules) {
+    if (!needs().length) break;
+    const cache = (results.ruleCache[rule.id] = results.ruleCache[rule.id] || { map: new Map(), next: null, pages: 0 });
+    try {
+      while (cache.pages < 3 && (cache.pages === 0 || cache.next) && needs().some((c) => !cache.map.has(c.oracle_id))) {
+        const res = await search(ruleQuery(results.query, rule), { unique: 'prints', order, nextUrl: cache.next });
+        if (token !== results.token) return;
+        cache.pages++;
+        cache.next = res.hasMore ? res.nextUrl : null;
+        for (const p of res.cards) {
+          if (!cache.map.has(p.oracle_id)) cache.map.set(p.oracle_id, []);
+          cache.map.get(p.oracle_id).push(p);
+        }
+        await pause(100);
+      }
+    } catch (_) {
+      continue; // a rule that fails (bad filter, offline) is just skipped
+    }
+    found.set(rule.id, cache.map);
+    const picks = choosePrintings(needs(), found, [rule]);
+    for (const [oid, pick] of picks) results.display.set(oid, { card: pick.card, why: `Art rule: ${pick.rule}` });
+    if (token !== results.token) return;
     renderResults();
   }
 }
@@ -403,10 +476,13 @@ function renderResults() {
     box.innerHTML =
       '<div class="tiles">' +
       cards
-        .map((c) => {
+        .map((base) => {
+          const c = shown(base);
+          const why = (results.display.get(base.oracle_id) || {}).why;
           const n = inDeckQty(c);
           const src = imgOf(c);
-          return `<div class="tile" data-id="${esc(c.id)}">
+          return `<div class="tile" data-id="${esc(base.id)}" title="${esc(`${c.set_name || ''} (${(c.set || '').toUpperCase()}) #${c.cn || ''}${why ? ' · ' + why : ''}`)}">
+            ${why ? `<span class="arttag">${why.startsWith('Your') ? '★' : 'art'}</span>` : ''}
             ${src ? `<img loading="lazy" data-act="detail" src="${esc(src)}" alt="${esc(c.name)}">` : `<div class="noimg" data-act="detail">${esc(c.name)}</div>`}
             ${n ? `<span class="badge">${n}</span>` : ''}
             <div class="tbar sr">
@@ -422,9 +498,10 @@ function renderResults() {
     box.innerHTML =
       '<ul class="rows">' +
       cards
-        .map((c) => {
+        .map((base) => {
+          const c = shown(base);
           const n = inDeckQty(c);
-          return `<li class="row-item" data-id="${esc(c.id)}">
+          return `<li class="row-item" data-id="${esc(base.id)}">
             <span class="qty"><span>${n || ''}</span></span>
             <button class="nm" data-act="detail">${esc(c.name)} <small style="color:var(--muted)">${esc(frontType(c))}</small></button>
             ${pips(c.mana_cost)}
@@ -444,8 +521,9 @@ function onResultsClick(e) {
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const host = el.closest('[data-id]');
-  const card = results.cards.find((c) => c.id === host.dataset.id);
-  if (!card) return;
+  const base = results.cards.find((c) => c.id === host.dataset.id);
+  if (!base) return;
+  const card = shown(base);
   switch (el.dataset.act) {
     case 'add':
       addCard(deck, card, 'main');
@@ -506,20 +584,222 @@ function onDeckClick(e) {
 
 // ---------- card detail ----------
 
-function showDetail(card) {
+// The card currently shown in the pop-up, and its printings once loaded.
+const detail = { card: null, prints: [], next: null, loading: false };
+
+const deckHas = (oracleId) =>
+  deck.commanders.some((c) => c.oracle_id === oracleId) ||
+  [...deck.main, ...deck.maybe].some((e) => e.card.oracle_id === oracleId);
+const deckPrinting = (oracleId) =>
+  deck.commanders.find((c) => c.oracle_id === oracleId) ||
+  ([...deck.main, ...deck.maybe].find((e) => e.card.oracle_id === oracleId) || {}).card;
+
+function showDetail(card, keepPrints = false) {
+  if (!keepPrints || !detail.card || detail.card.oracle_id !== card.oracle_id) {
+    detail.prints = [];
+    detail.next = null;
+  }
+  detail.card = card;
+  renderDetail();
+  if (!$('#cardDialog').open) $('#cardDialog').showModal();
+}
+
+function renderDetail() {
+  const card = detail.card;
   const fmt = formatInfo(deck.format);
   const legal = fmt.scry && card.legalities ? card.legalities[fmt.scry] : null;
-  const back = card.img_back && card.img_back.normal ? `<img src="${esc(card.img_back.normal)}" alt="${esc(card.name)} (back)">` : '';
+  const fav = favoriteOf(artPrefs.favs, card.oracle_id);
+  const isFav = fav && fav.id === card.id;
+  const inDeck = deckHas(card.oracle_id);
+  const usedHere = inDeck && (deckPrinting(card.oracle_id) || {}).id === card.id;
+  const backSrc = imageUrl(card, 'large', true);
+  const back = backSrc ? `<img src="${esc(backSrc)}" alt="${esc(card.name)} (back)">` : '';
   $('#cardDetail').innerHTML = `
-    ${imgOf(card, 'normal') ? `<img src="${esc(imgOf(card, 'normal'))}" alt="${esc(card.name)}">` : ''}${back}
+    ${imgOf(card, 'large') ? `<img src="${esc(imgOf(card, 'large'))}" alt="${esc(card.name)}">` : ''}${back}
     <div class="meta">
       <h2>${esc(card.name)}</h2>
       <div>${pips(card.mana_cost)} ${card.cmc ? `<small>MV ${card.cmc}</small>` : ''}</div>
       <p>${esc(card.type_line)}</p>
       <pre>${esc(card.oracle_text)}</pre>
-      <p class="hint">${esc(card.set_name || '')} ${card.set ? `(${esc(card.set.toUpperCase())}) #${esc(card.cn || '')}` : ''}${legal ? ` · ${esc(fmt.label)}: ${esc(legal.replace('_', ' '))}` : ''}</p>
+      <p class="hint">${esc(card.set_name || '')} ${card.set ? `(${esc(card.set.toUpperCase())}) #${esc(card.cn || '')}` : ''}${card.lang && card.lang !== 'en' ? ` · ${esc(card.lang.toUpperCase())}` : ''}${legal ? ` · ${esc(fmt.label)}: ${esc(legal.replace('_', ' '))}` : ''}</p>
+      <div class="chips">
+        <button data-dact="fav" class="${isFav ? 'primary' : ''}">${isFav ? '★ Favorite printing' : '☆ Make this my favorite printing'}</button>
+        ${inDeck ? `<button data-dact="use" ${usedHere ? 'disabled' : ''}>${usedHere ? 'Used in this deck' : 'Use this printing in this deck'}</button>` : ''}
+        ${detail.prints.length ? '' : '<button data-dact="prints">Show all printings</button>'}
+      </div>
+      ${fav && !isFav ? `<p class="hint">Your favorite is ${esc(fav.set_name || '')} #${esc(fav.cn || '')}.</p>` : ''}
     </div>`;
-  $('#cardDialog').showModal();
+  renderPrintings();
+}
+
+function renderPrintings() {
+  const box = $('#printings');
+  if (detail.loading && !detail.prints.length) {
+    box.innerHTML = '<p class="hint">Loading printings…</p>';
+    return;
+  }
+  if (!detail.prints.length) {
+    box.innerHTML = '';
+    return;
+  }
+  const fav = favoriteOf(artPrefs.favs, detail.card.oracle_id);
+  box.innerHTML =
+    `<h3 class="ptitle">${detail.prints.length} printing${detail.prints.length > 1 ? 's' : ''} · tap one to view it</h3><div class="tiles ptiles">` +
+    detail.prints
+      .map((p) => `<div class="tile ${p.id === detail.card.id ? 'sel' : ''}" data-pid="${esc(p.id)}">
+        <img loading="lazy" data-dact="view" src="${esc(imgOf(p))}" alt="${esc(p.set_name || p.set)}">
+        ${fav && fav.id === p.id ? '<span class="arttag">★</span>' : ''}
+        <div class="pcap">${esc((p.set || '').toUpperCase())} #${esc(p.cn || '')}${p.lang !== 'en' ? ' · ' + esc(p.lang.toUpperCase()) : ''}</div>
+      </div>`)
+      .join('') +
+    '</div>' +
+    (detail.next ? '<button data-dact="more" class="pmore">More printings</button>' : '');
+}
+
+async function loadPrintings(more = false) {
+  if (detail.loading) return;
+  detail.loading = true;
+  renderPrintings();
+  try {
+    const res = await printingsOf(detail.card.oracle_id, more ? detail.next : null);
+    detail.prints = more ? detail.prints.concat(res.cards) : res.cards;
+    detail.next = res.hasMore ? res.nextUrl : null;
+  } catch (err) {
+    toast(`Couldn't load printings: ${err.message || err}`);
+  } finally {
+    detail.loading = false;
+    renderDetail();
+  }
+}
+
+function onDetailClick(e) {
+  const el = e.target.closest('[data-dact]');
+  if (!el) return;
+  const card = detail.card;
+  switch (el.dataset.dact) {
+    case 'prints':
+      loadPrintings(false);
+      return;
+    case 'more':
+      loadPrintings(true);
+      return;
+    case 'view': {
+      const p = detail.prints.find((x) => x.id === el.closest('[data-pid]').dataset.pid);
+      if (p) showDetail(p, true);
+      $('#cardDialog').scrollTop = 0;
+      return;
+    }
+    case 'fav': {
+      const fav = favoriteOf(artPrefs.favs, card.oracle_id);
+      const on = !(fav && fav.id === card.id);
+      artPrefs.favs[card.oracle_id] = { card: on ? card : null, t: Date.now() };
+      saveArt();
+      toast(on ? 'Favorite printing saved. It will show in searches.' : 'Favorite removed.');
+      refreshFavoritesInResults();
+      renderDetail();
+      return;
+    }
+    case 'use': {
+      const current = deckPrinting(card.oracle_id);
+      if (!current) return;
+      swapPrinting(deck, current.name, card);
+      changed();
+      renderDetail();
+      toast('Printing changed in this deck.');
+      return;
+    }
+  }
+}
+
+// ---------- art preferences ----------
+
+function renderArtDialog() {
+  const rules = artPrefs.art.rules;
+  $('#artRules').innerHTML = rules
+    .map((r, i) => `<li data-i="${i}">
+      <label class="rulehead"><input type="checkbox" data-aact="toggle" ${r.on ? 'checked' : ''}> ${esc(r.label)}</label>
+      <code>${esc(r.query)}${r.test ? ' + extra check' : ''}</code>
+      <span class="ruleacts">
+        <button class="icon" data-aact="up" ${i === 0 ? 'disabled' : ''} title="Higher priority">↑</button>
+        <button class="icon" data-aact="down" ${i === rules.length - 1 ? 'disabled' : ''} title="Lower priority">↓</button>
+        <button data-aact="check">Check</button>
+        <button class="icon" data-aact="del" title="Remove rule">✕</button>
+      </span>
+      <div class="rulemsg status"></div>
+    </li>`)
+    .join('');
+  $('#artPrefer').innerHTML = PREFER_OPTIONS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+  $('#artPrefer').value = artPrefs.art.prefer || '';
+  const nFav = Object.values(artPrefs.favs).filter((f) => f.card).length;
+  $('#artFavCount').textContent = `${nFav} favorite printing${nFav === 1 ? '' : 's'} saved.`;
+}
+
+function artChanged() {
+  artPrefs.art.t = Date.now();
+  saveArt();
+  renderArtDialog();
+}
+
+async function onArtClick(e) {
+  const el = e.target.closest('[data-aact]');
+  if (!el) return;
+  const li = el.closest('[data-i]');
+  const i = li ? Number(li.dataset.i) : -1;
+  const rules = artPrefs.art.rules;
+  switch (el.dataset.aact) {
+    case 'toggle':
+      rules[i].on = el.checked;
+      return artChanged();
+    case 'up':
+      [rules[i - 1], rules[i]] = [rules[i], rules[i - 1]];
+      return artChanged();
+    case 'down':
+      [rules[i + 1], rules[i]] = [rules[i], rules[i + 1]];
+      return artChanged();
+    case 'del':
+      if (!confirm(`Remove the rule "${rules[i].label}"?`)) return;
+      rules.splice(i, 1);
+      return artChanged();
+    case 'check': {
+      const rule = rules[i];
+      const msg = li.querySelector('.rulemsg');
+      msg.className = 'rulemsg status';
+      msg.textContent = 'Checking…';
+      try {
+        const res = await search(rule.query, { unique: 'prints', order: 'released' });
+        const ok = res.cards.filter((c) => ruleMatches(rule, c, null));
+        const names = [...new Set(ok.map((c) => c.name))].slice(0, 5);
+        msg.textContent = ok.length
+          ? `Matches${rule.test ? ` ${ok.length} of the newest ${res.cards.length}` : ` ${res.total}`} printings, e.g. ${names.join(', ')}.`
+          : res.total
+            ? `Scryfall found ${res.total} printings, but none passed the extra check in the newest ${res.cards.length}.`
+            : 'No printings match this rule.';
+      } catch (err) {
+        msg.className = 'rulemsg status err';
+        msg.textContent = `Scryfall didn't accept this filter: ${err.message || err}`;
+      }
+      return;
+    }
+    case 'add': {
+      const label = $('#artNewLabel').value.trim();
+      const query = $('#artNewQuery').value.trim();
+      if (!query) return toast('Type a Scryfall filter for the rule, e.g. s:sld');
+      rules.push({ id: 'r' + Date.now().toString(36), label: label || query, query, on: true });
+      $('#artNewLabel').value = '';
+      $('#artNewQuery').value = '';
+      return artChanged();
+    }
+    case 'reset':
+      if (!confirm('Reset the art rules to the starting set?')) return;
+      artPrefs.art = { ...defaultArt(), prefer: artPrefs.art.prefer };
+      return artChanged();
+    case 'clearfavs':
+      if (!confirm('Forget all your favorite printings?')) return;
+      for (const k of Object.keys(artPrefs.favs)) artPrefs.favs[k] = { card: null, t: Date.now() };
+      saveArt();
+      refreshFavoritesInResults();
+      return renderArtDialog();
+  }
 }
 
 // ---------- import / export ----------
@@ -727,8 +1007,25 @@ function init() {
   });
 
   $('#cardClose').addEventListener('click', () => $('#cardDialog').close());
+  $('#cardDialog').addEventListener('click', onDetailClick);
+  $('#artBtn').addEventListener('click', () => {
+    renderArtDialog();
+    $('#artDialog').showModal();
+  });
+  $('#artDialog').addEventListener('click', onArtClick);
+  $('#artPrefer').addEventListener('change', (e) => {
+    artPrefs.art.prefer = e.target.value;
+    artChanged();
+  });
+  $('#artClose').addEventListener('click', () => $('#artDialog').close());
+  // Tapping outside a pop-up closes it (but not tapping its own padding).
   for (const d of document.querySelectorAll('dialog')) {
-    d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
+    d.addEventListener('click', (e) => {
+      if (e.target !== d) return;
+      const r = d.getBoundingClientRect();
+      const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) d.close();
+    });
   }
 
   document.querySelectorAll('[data-pane-btn]').forEach((b) =>

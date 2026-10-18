@@ -121,6 +121,7 @@
               </select>
             </label>
             <label class="check"><input id="fCmdColors" type="checkbox"> Only my commander's colors</label>
+            <button type="button" id="artBtn" class="artbtn">Art preferences…</button>
           </div>
         </details>
       </form>
@@ -157,7 +158,31 @@
 
   <dialog id="cardDialog">
     <div id="cardDetail"></div>
+    <div id="printings"></div>
     <div class="row end"><button id="cardClose">Close</button></div>
+  </dialog>
+
+  <dialog id="artDialog">
+    <h2>Art preferences</h2>
+    <p class="hint">Which artwork search results show. Your favorite printing of a card always comes first, then these rules from the top down (the first rule a card has a printing for wins), then the fallback below. Rules only apply when Filters &gt; Show is "One per card".</p>
+    <ol id="artRules" class="rules"></ol>
+    <details class="addrule">
+      <summary>Add your own rule</summary>
+      <div class="row">
+        <label>Name <input id="artNewLabel" placeholder="e.g. Secret Lair"></label>
+        <label>Scryfall filter <input id="artNewQuery" placeholder="e.g. s:sld"></label>
+        <button data-aact="add">Add</button>
+      </div>
+    </details>
+    <div class="row">
+      <label>Then fall back to <select id="artPrefer"></select></label>
+    </div>
+    <p class="hint"><span id="artFavCount"></span> Set favorites with "Show all printings" on any card.</p>
+    <div class="row end">
+      <button data-aact="clearfavs">Forget favorites</button>
+      <button data-aact="reset">Reset rules</button>
+      <button id="artClose" class="primary">Done</button>
+    </div>
   </dialog>
 
   <dialog id="exportDialog">

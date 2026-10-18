@@ -14,8 +14,11 @@ A personal MTG deckbuilder that runs in the browser on your PC and installs to y
 - Plain-text export, multiple decks, works offline once opened (searching needs internet)
 - Autosave: every change is saved on the device straight away
 - Optional sync between devices through a private gist in your own GitHub account (the Sync button)
+- Sharper card images (Scryfall's "normal" size in lists, "large" in the card pop-up)
+- Printing picker: "Show all printings" in any card's pop-up; use a printing in the deck or make it your favorite
+- Art preferences (Filters > Art preferences): favorite printings first, then your ordered art rules, then a fallback such as oldest/newest. Favorites and rules sync too
 
-Not built yet: printing picker per card, stats panel, goldfishing, Canadian Highlander points.
+Not built yet: stats panel, goldfishing, Canadian Highlander points.
 
 ## Try it on your computer
 
@@ -46,6 +49,7 @@ Click **Sync** in the top bar and follow the three steps. It makes a GitHub toke
 - `src/store.js` - saving to the browser
 - `src/sync.js` - sync through a GitHub gist
 - `src/query.js` - turns plain words into a name-or-rules-text search
+- `src/art.js` - favorite printings and art rules
 - `src/app.js` - the interface
 - `sw.js`, `manifest.webmanifest`, `icons/` - offline use and "install to home screen"
-- `tests/` - run with `node tests/core.test.mjs` and `node tests/sync.test.mjs`
+- `tests/` - run with `node tests/core.test.mjs`, `node tests/sync.test.mjs` and `node tests/art.test.mjs`

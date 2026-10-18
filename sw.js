@@ -2,11 +2,11 @@
 // and are cached by the browser; searching still needs a connection.
 // App files are fetched fresh whenever you're online (so updates show up on the
 // next load) and the saved copy is only used when you're offline.
-const CACHE = 'deckbuilder-v5';
+const CACHE = 'deckbuilder-v6';
 const SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
   './src/app.js', './src/parser.js', './src/scryfall.js', './src/deck.js', './src/store.js',
-  './src/query.js', './src/version.js', './src/sync.js',
+  './src/query.js', './src/version.js', './src/sync.js', './src/art.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
 ];
 

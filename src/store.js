@@ -4,6 +4,7 @@
 const DECKS = 'mtgdb.decks.v1';
 const PREFS = 'mtgdb.prefs.v1';
 const SYNC = 'mtgdb.sync.v1';
+const ART = 'mtgdb.art.v1';
 
 function read(key, fallback) {
   try {
@@ -29,6 +30,13 @@ export const loadPrefs = () => ({ view: 'images', currentId: null, ...read(PREFS
 export const savePrefs = (prefs) => write(PREFS, prefs);
 
 // Sync settings for this device: token, which gist, and what was last synced.
+// Favorite printings and art rules: { favs: { oracle_id: { card, t } }, art: { rules, prefer, t } }
+export const loadArtPrefs = (defaults) => {
+  const v = read(ART, {});
+  return { favs: v.favs || {}, art: v.art && Array.isArray(v.art.rules) ? v.art : defaults };
+};
+export const saveArtPrefs = (v) => write(ART, v);
+
 export const loadSync = () => ({ token: '', gistId: '', base: {}, deleted: {}, lastSync: 0, ...read(SYNC, {}) });
 export const saveSync = (s) => write(SYNC, s);
 
