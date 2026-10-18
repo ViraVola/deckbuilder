@@ -19,6 +19,8 @@
     <button id="importBtn">Import</button>
     <button id="exportBtn">Export</button>
     <span class="spacer"></span>
+    <span id="saveInfo" class="ver saveinfo"></span>
+    <button id="syncBtn" class="syncbtn">Sync: off</button>
     <span id="ver" class="ver" title="App version"></span>
     <label class="viewtoggle" title="Show card art or a compact list">
       View
@@ -138,7 +140,8 @@
     <form method="dialog" id="importForm">
       <h2>Import a deck</h2>
       <p class="hint">Paste a list, or choose a file. Works with Decked Builder .dec files and plain text (<code>4 Lightning Bolt</code>, <code>SB: 1 Pyroblast</code>, "Sideboard" headers).</p>
-      <input id="importFile" type="file" accept=".dec,.txt,.csv,text/plain">
+      <input id="importFile" type="file">
+      <p class="hint droptip">…or drag a file onto this box.</p>
       <textarea id="importText" rows="10" placeholder="Paste a decklist here"></textarea>
       <div class="row">
         <label>Name <input id="importName" placeholder="(from file name)"></label>
@@ -165,6 +168,30 @@
       <button id="exportDownload">Download .txt</button>
       <button id="exportClose">Close</button>
     </div>
+  </dialog>
+
+  <dialog id="syncDialog">
+    <h2>Sync between devices</h2>
+    <p class="hint">Your decks are always saved automatically on the device you're using. Turn on sync to keep them the same on your phone and PC. They're stored as a private gist in your own GitHub account.</p>
+    <div id="syncSetup">
+      <ol class="steps">
+        <li><a id="syncTokenLink" href="#" target="_blank" rel="noopener">Open GitHub's token page</a>. The name, "no expiration" and the <b>Gists: Read and write</b> permission are filled in for you.</li>
+        <li>Scroll down and click <b>Generate token</b>, then copy the code that starts with <code>github_pat_</code>. GitHub only shows it once.</li>
+        <li>Paste it here and click <b>Connect</b>. Do this on each device (a new token each time is fine).</li>
+      </ol>
+      <input id="syncToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token here">
+      <p class="hint">The token stays in this browser. It can only read and change your gists, not your repositories. Don't paste it anywhere else or send it to anyone, including Claude.</p>
+      <div class="row end"><button id="syncConnect" class="primary">Connect</button></div>
+    </div>
+    <div id="syncOn" hidden>
+      <p id="syncStatusText"></p>
+      <div class="row end">
+        <button id="syncDisconnect">Turn off on this device</button>
+        <button id="syncNow" class="primary">Sync now</button>
+      </div>
+    </div>
+    <div id="syncMsg" class="status"></div>
+    <div class="row end"><button id="syncClose">Close</button></div>
   </dialog>
 
   <div id="toast" role="status" aria-live="polite"></div>

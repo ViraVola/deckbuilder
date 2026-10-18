@@ -12,8 +12,10 @@ A personal MTG deckbuilder that runs in the browser on your PC and installs to y
 - Card art or text list view, card detail pop-up
 - Advisory warnings (never blocking): deck size, singleton duplicates, outside commander colors, banned/not legal, illegal commander pairs
 - Plain-text export, multiple decks, works offline once opened (searching needs internet)
+- Autosave: every change is saved on the device straight away
+- Optional sync between devices through a private gist in your own GitHub account (the Sync button)
 
-Not built yet: printing picker per card, stats panel, goldfishing, Canadian Highlander points, sync between devices.
+Not built yet: printing picker per card, stats panel, goldfishing, Canadian Highlander points.
 
 ## Try it on your computer
 
@@ -31,7 +33,9 @@ then open http://localhost:8000 (needs internet for card data).
 4. After a minute, the page shows your address (like `https://YOURNAME.github.io/deckbuilder/`).
 5. Open that address on your phone, then use the browser's "Add to Home Screen" (Safari: Share > Add to Home Screen; Chrome: menu > Install app).
 
-Your decks are stored in each browser separately, so use Export / Import to move a deck between phone and PC until sync exists.
+## Sync between phone and PC
+
+Click **Sync** in the top bar and follow the three steps. It makes a GitHub token that can only touch your gists, and the app keeps your decks in one private gist called `deckbuilder-data.json`. Do it once on each device. Edits are sent a few seconds after you make them, and other devices pick them up when the app is opened or brought back to the front. If the same deck was changed on two devices before syncing, both versions are kept (one is named "(copy from ...)").
 
 ## Files
 
@@ -40,6 +44,8 @@ Your decks are stored in each browser separately, so use Export / Import to move
 - `src/scryfall.js` - Scryfall search and card lookup
 - `src/deck.js` - deck model, commander rules, warnings, export
 - `src/store.js` - saving to the browser
+- `src/sync.js` - sync through a GitHub gist
+- `src/query.js` - turns plain words into a name-or-rules-text search
 - `src/app.js` - the interface
 - `sw.js`, `manifest.webmanifest`, `icons/` - offline use and "install to home screen"
-- `tests/core.test.mjs` - run with `node tests/core.test.mjs`
+- `tests/` - run with `node tests/core.test.mjs` and `node tests/sync.test.mjs`

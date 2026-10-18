@@ -53,7 +53,13 @@ export function parseDeckList(text) {
       continue;
     }
 
-    if (line.startsWith('#') || /^\/\/(?!\/)\s/.test(line) || line === '//') continue;
+    // Comment lines (# ..., // ..., and Decked Builder's ///decked: cache line).
+    // A comment that names a section, like "// Sideboard", switches zones.
+    if (/^(#|\/\/)/.test(line)) {
+      const h = ZONE_HEADERS[line.replace(/^[#\/]+\s*/, '').replace(/[:\s]+$/, '').toLowerCase()];
+      if (h) zone = h;
+      continue;
+    }
 
     const header = ZONE_HEADERS[line.replace(/[:\s]+$/, '').toLowerCase()];
     if (header) {

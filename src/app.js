@@ -7,7 +7,8 @@ import {
 } from './deck.js';
 import { expandQuery } from './query.js';
 import { VERSION } from './version.js';
-import { loadDecks, saveDecks, loadPrefs, savePrefs } from './store.js';
+import { loadDecks, saveDecks, loadPrefs, savePrefs, loadSync, saveSync, requestPersistence } from './store.js';
+import { runSync, SyncError, TOKEN_URL } from './sync.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) =>
@@ -16,19 +17,139 @@ const esc = (s) =>
 let decks = loadDecks();
 let prefs = loadPrefs();
 let deck = null;
+let sync = loadSync();
+const syncUi = { running: false, again: false, timer: null, error: '', kind: '' };
 const results = { cards: [], total: 0, nextUrl: null, busy: false, query: '' };
 
 // ---------- persistence ----------
 
 let saveTimer = null;
+const timeOf = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+// Every change is saved on this device right away (a quarter second later at
+// most, and immediately if the app is closed or put in the background).
 function persist() {
   decks[deck.id] = deck;
   prefs.currentId = deck.id;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    if (!saveDecks(decks)) toast('Could not save: browser storage is full.');
-    savePrefs(prefs);
-  }, 250);
+  saveTimer = setTimeout(flush, 250);
+}
+
+function flush() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (!deck) return;
+  decks[deck.id] = deck;
+  const ok = saveDecks(decks) && savePrefs(prefs);
+  const info = $('#saveInfo');
+  info.textContent = ok ? 'Saved' : '⚠ Not saved';
+  info.classList.toggle('bad', !ok);
+  info.title = ok ? `Saved on this device at ${timeOf(Date.now())}` : 'Browser storage is full or blocked, so changes are not being saved.';
+  if (!ok) toast('Could not save: browser storage is full or blocked.');
+}
+
+// A real edit: save it, and send it to the other devices shortly.
+function edited() {
+  if (deck.starter) delete deck.starter;
+  persist();
+  scheduleSync(4000);
+}
+
+// ---------- sync between devices ----------
+
+// The empty deck a new device starts with isn't worth syncing.
+function starterDeck() {
+  const d = newDeck('My first deck', 'commander');
+  d.starter = true;
+  return d;
+}
+const isBlankStarter = (d) => d.starter && !d.main.length && !d.maybe.length && !d.commanders.length;
+const syncableDecks = () => Object.fromEntries(Object.entries(decks).filter(([, d]) => !isBlankStarter(d)));
+
+function scheduleSync(ms = 4000) {
+  if (!sync.token) return;
+  clearTimeout(syncUi.timer);
+  syncUi.timer = setTimeout(() => doSync(false), ms);
+}
+
+// Put decks that arrived from another device into the app.
+function applyRemote({ upsert = [], remove = [] }) {
+  for (const d of upsert) decks[d.id] = d;
+  for (const id of remove) delete decks[id];
+  if (upsert.length) for (const [id, d] of Object.entries(decks)) if (isBlankStarter(d)) delete decks[id];
+  if (!Object.keys(decks).length) {
+    const d = starterDeck();
+    decks[d.id] = d;
+  }
+  deck = decks[deck.id] || Object.values(decks).sort((a, b) => b.updated - a.updated)[0];
+  flush();
+  renderDeckSelect();
+  renderDeck();
+  renderResults();
+}
+
+async function doSync(manual) {
+  if (!sync.token) return;
+  if (syncUi.running) {
+    syncUi.again = true;
+    return;
+  }
+  clearTimeout(syncUi.timer);
+  if (saveTimer) flush();
+  syncUi.running = true;
+  renderSync();
+  try {
+    const r = await runSync({ state: sync, getDecks: syncableDecks, apply: applyRemote });
+    syncUi.error = '';
+    syncUi.kind = '';
+    const notes = [];
+    if (r.conflicts) notes.push(`${r.conflicts} deck${r.conflicts > 1 ? 's were' : ' was'} changed on two devices, so both versions were kept`);
+    if (r.missing) notes.push(`${r.missing} card${r.missing > 1 ? 's' : ''} couldn't be restored`);
+    if (notes.length) toast(notes.join('. ') + '.');
+    else if (manual) toast(r.pulled ? `Synced: ${r.pulled} deck${r.pulled > 1 ? 's' : ''} updated` : 'Synced');
+  } catch (err) {
+    syncUi.error = err instanceof SyncError ? err.message : `Sync failed: ${err.message || err}`;
+    syncUi.kind = err.kind || 'other';
+    if (manual || ['auth', 'scope', 'corrupt'].includes(syncUi.kind)) toast(syncUi.error);
+  } finally {
+    saveSync(sync);
+    syncUi.running = false;
+    renderSync();
+    if (syncUi.again) {
+      syncUi.again = false;
+      scheduleSync(1500);
+    }
+  }
+}
+
+function renderSync() {
+  const b = $('#syncBtn');
+  b.classList.remove('ok', 'bad');
+  if (!sync.token) {
+    b.textContent = 'Sync: off';
+    b.title = 'Keep your decks the same on phone and PC';
+  } else if (syncUi.running) {
+    b.textContent = 'Syncing…';
+  } else if (syncUi.error) {
+    b.textContent = syncUi.kind === 'network' ? 'Sync: offline' : 'Sync problem';
+    b.classList.add('bad');
+    b.title = syncUi.error;
+  } else {
+    b.textContent = sync.lastSync ? `Synced ${timeOf(sync.lastSync)}` : 'Sync: on';
+    b.classList.add('ok');
+    b.title = 'Decks sync automatically. Click for options.';
+  }
+
+  $('#syncSetup').hidden = !!sync.token;
+  $('#syncOn').hidden = !sync.token;
+  $('#syncStatusText').textContent = !sync.token
+    ? ''
+    : syncUi.running
+      ? 'Syncing now…'
+      : `Sync is on for this device. ${sync.lastSync ? `Last synced at ${timeOf(sync.lastSync)}.` : 'Not synced yet.'} Changes are sent a few seconds after you make them, and other devices' changes arrive when you open the app.`;
+  const msg = $('#syncMsg');
+  msg.textContent = syncUi.error;
+  msg.className = syncUi.error ? 'status err' : 'status';
 }
 
 function toast(msg) {
@@ -186,7 +307,7 @@ function renderDeckSelect() {
 }
 
 function changed() {
-  persist();
+  edited();
   renderDeck();
   renderResults();
 }
@@ -416,7 +537,10 @@ async function doImport(ev) {
   const { entries, unparsed } = parseDeckList(text);
   if (!entries.length) {
     status.className = 'status err';
-    status.textContent = 'No cards found in that text.';
+    const start = text.trim().split('\n')[0] || '';
+    status.textContent = text.trim()
+      ? `No cards found. The text starts with: "${start.slice(0, 60)}"`
+      : 'Choose a file or paste a decklist first.';
     return;
   }
   const go = $('#importGo');
@@ -453,6 +577,34 @@ async function doImport(ev) {
   }
 }
 
+// Reads a deck file as text. Handles UTF-8 and UTF-16 (some Windows tools
+// save that way), and doesn't care what the file extension is.
+async function readFileText(file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let enc = 'utf-8';
+  if (buf[0] === 0xff && buf[1] === 0xfe) enc = 'utf-16le';
+  else if (buf[0] === 0xfe && buf[1] === 0xff) enc = 'utf-16be';
+  return new TextDecoder(enc).decode(buf);
+}
+
+async function loadImportFile(f) {
+  if (!f) return;
+  const status = $('#importStatus');
+  try {
+    const text = await readFileText(f);
+    $('#importText').value = text;
+    if (!$('#importName').value) $('#importName').value = f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+    const n = parseDeckList(text).entries.length;
+    status.className = n ? 'status' : 'status err';
+    status.textContent = n
+      ? `Loaded ${f.name} (${n} different cards). Click Import.`
+      : `Loaded ${f.name}, but couldn't find any cards in it.`;
+  } catch (err) {
+    status.className = 'status err';
+    status.textContent = `Couldn't read ${f.name}: ${err.message || err}`;
+  }
+}
+
 function copyText(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
   const ta = $('#exportText');
@@ -480,7 +632,7 @@ function init() {
   fillFormatSelects();
   $('#ver').textContent = VERSION;
   if (!Object.keys(decks).length) {
-    const d = newDeck('My first deck', 'commander');
+    const d = starterDeck();
     decks[d.id] = d;
   }
   deck = decks[prefs.currentId] || Object.values(decks).sort((a, b) => b.updated - a.updated)[0];
@@ -494,28 +646,33 @@ function init() {
     const d = newDeck(name.trim() || 'New deck', 'commander');
     decks[d.id] = d;
     switchDeck(d.id);
+    scheduleSync(4000);
   });
   $('#deleteDeckBtn').addEventListener('click', () => {
     if (!confirm(`Delete "${deck.name}"? This can't be undone.`)) return;
     delete decks[deck.id];
+    sync.deleted[deck.id] = Date.now();
+    saveSync(sync);
     if (!Object.keys(decks).length) {
-      const d = newDeck('My first deck', 'commander');
+      const d = starterDeck();
       decks[d.id] = d;
     }
     deck = Object.values(decks)[0];
-    saveDecks(decks);
-    persist();
+    flush();
     renderDeckSelect();
     renderDeck();
     renderResults();
+    scheduleSync(1500);
   });
   $('#deckName').addEventListener('input', (e) => {
     deck.name = e.target.value || 'Untitled deck';
-    persist();
+    deck.updated = Date.now();
+    edited();
     renderDeckSelect();
   });
   $('#formatSelect').addEventListener('change', (e) => {
     deck.format = e.target.value;
+    deck.updated = Date.now();
     changed();
   });
   $('#viewSelect').addEventListener('change', (e) => {
@@ -543,11 +700,15 @@ function init() {
   });
   $('#importCancel').addEventListener('click', () => $('#importDialog').close());
   $('#importForm').addEventListener('submit', doImport);
-  $('#importFile').addEventListener('change', async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    $('#importText').value = await f.text();
-    if (!$('#importName').value) $('#importName').value = f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+  $('#importFile').addEventListener('change', (e) => loadImportFile(e.target.files[0]));
+  const dlg = $('#importDialog');
+  dlg.addEventListener('dragover', (e) => { e.preventDefault(); dlg.classList.add('dragging'); });
+  dlg.addEventListener('dragleave', (e) => { if (e.target === dlg) dlg.classList.remove('dragging'); });
+  dlg.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dlg.classList.remove('dragging');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadImportFile(f);
   });
 
   // Export
@@ -577,9 +738,59 @@ function init() {
     })
   );
 
+  // Sync dialog
+  $('#syncTokenLink').href = TOKEN_URL;
+  $('#syncBtn').addEventListener('click', () => {
+    renderSync();
+    $('#syncDialog').showModal();
+  });
+  $('#syncClose').addEventListener('click', () => $('#syncDialog').close());
+  $('#syncConnect').addEventListener('click', async () => {
+    const token = $('#syncToken').value.trim();
+    if (!token) {
+      syncUi.error = 'Paste your token first.';
+      renderSync();
+      return;
+    }
+    sync = { ...sync, token, gistId: '', base: {}, lastSync: 0 };
+    $('#syncToken').value = '';
+    syncUi.error = '';
+    await doSync(true);
+    if (['auth', 'scope'].includes(syncUi.kind)) {
+      sync.token = ''; // didn't work: go back to the setup steps, keep the message
+      saveSync(sync);
+    }
+    renderSync();
+  });
+  $('#syncNow').addEventListener('click', () => doSync(true));
+  $('#syncDisconnect').addEventListener('click', () => {
+    if (!confirm('Stop syncing on this device? Your decks stay here and on GitHub.')) return;
+    sync = { ...sync, token: '', gistId: '', base: {}, lastSync: 0 };
+    syncUi.error = '';
+    saveSync(sync);
+    renderSync();
+  });
+
+  // Save immediately when the app is hidden or closed; check for other
+  // devices' changes when it comes back.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+    else scheduleSync(300);
+  });
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('online', () => scheduleSync(500));
+  setInterval(() => {
+    if (document.visibilityState === 'visible') scheduleSync(0);
+  }, 120000);
+
   renderDeckSelect();
   renderDeck();
   renderResults();
+  renderSync();
+  requestPersistence();
+  $('#saveInfo').textContent = 'Saved';
+  $('#saveInfo').title = 'Your decks are saved on this device automatically.';
+  scheduleSync(300);
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});

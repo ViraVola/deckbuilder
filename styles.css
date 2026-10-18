@@ -133,3 +133,15 @@ dialog h2 { margin: 0 0 8px; font-size: 18px; }
 
 .ver { color: var(--muted); font-size: 11px; }
 .qline { font: 12px/1.3 ui-monospace, Menlo, Consolas, monospace; word-break: break-word; margin-top: -4px; }
+
+.droptip { margin: 4px 0 8px; }
+#importDialog.dragging { outline: 2px dashed var(--accent); outline-offset: -8px; }
+
+.saveinfo.bad { color: var(--bad); font-weight: 600; }
+.syncbtn { font-size: 13px; padding: 4px 10px; }
+.syncbtn.ok { color: #8fd19e; }
+.syncbtn.bad { color: var(--bad); border-color: #6a2b2b; }
+ol.steps { padding-left: 20px; margin: 8px 0; font-size: 14px; }
+ol.steps li { margin: 6px 0; }
+ol.steps a { color: var(--accent); }
+#syncToken { width: 100%; margin: 4px 0; }

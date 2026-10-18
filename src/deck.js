@@ -17,6 +17,7 @@ export const WUBRG = ['W', 'U', 'B', 'R', 'G'];
 export const formatInfo = (id) => FORMATS.find((f) => f.id === id) || FORMATS[FORMATS.length - 1];
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+export const newId = uid;
 
 export function newDeck(name = 'Untitled deck', format = 'commander') {
   return { id: uid(), name, format, commanders: [], main: [], maybe: [], updated: Date.now() };

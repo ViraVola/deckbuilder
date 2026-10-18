@@ -180,4 +180,12 @@ await test('plain words search name and rules text; syntax passes through', () =
   assert.equal(expandQuery('   '), '');
 });
 
+await test('parser: BOM, comment lines, // Sideboard header, stray Decked Builder cache line', () => {
+  const { entries, unparsed } = parseDeckList('\uFEFF# my deck\n1 Sol Ring\n// Sideboard\n1 Opt\n///decked:v1:abc==\n');
+  assert.deepEqual(entries.map((e) => [e.zone, e.name]), [['main', 'Sol Ring'], ['maybe', 'Opt']]);
+  assert.equal(unparsed.length, 0);
+  const dec = parseDeckList('\uFEFF///mvid:40 qty:1 name:Sol Ring loc:Deck\n1 Sol Ring\n');
+  assert.equal(dec.entries[0].mvid, 40);
+});
+
 console.log(`\n${passed} tests passed`);
